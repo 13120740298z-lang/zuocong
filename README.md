@@ -39,3 +39,26 @@ npm run dist
 ```
 
 产物会输出到 `dist/`，包含安装包（NSIS）与便携版（portable）的 `.exe`。
+
+---
+
+# Python/tkinter 版本（团子.py）
+
+项目根目录已同时提供 `团子.py` 与 `build.bat`（Windows）。
+
+## 一键打包并运行（推荐）
+
+双击 `build.bat`：
+- 如果已经存在 `dist\团子.exe`，会直接运行
+- 否则会自动生成 `团子.ico`、安装 PyInstaller、打包单文件 exe，然后自动启动
+
+## AI 配置
+
+编辑 `团子.py` 顶部：
+- `API_URL`（OpenAI 兼容接口，例如 `http://127.0.0.1:8000/v1`）
+- `API_KEY`（留空则走本地拟人化回复）
+- `MODEL`（默认 `deepseek-chat`）
+
+## 如果你想“我什么都不做就拿到 exe”
+
+可以把仓库推到 GitHub，然后在 Actions 里手动运行工作流 `.github/workflows/build-windows-exe.yml`，构建产物会以 artifact 形式提供下载（`团子.exe`）。

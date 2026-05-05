@@ -1,0 +1,29 @@
+name: build-windows-exe
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build exe
+        shell: pwsh
+        run: |
+          python 团子.py --gen-icon
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          pyinstaller --onefile --noconsole --icon=团子.ico 团子.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumpling-exe
+          path: dist/团子.exe
+
