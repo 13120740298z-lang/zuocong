@@ -1,0 +1,494 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dumpling</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+      }
+
+      canvas {
+        display: block;
+        width: 300px;
+        height: 300px;
+      }
+
+      #menu {
+        position: fixed;
+        min-width: 120px;
+        padding: 6px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(255, 210, 180, 0.45);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      }
+
+      #menu button {
+        display: block;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        padding: 8px 10px;
+        text-align: left;
+        font: 12px system-ui, -apple-system, Segoe UI, sans-serif;
+        color: rgba(50, 50, 50, 0.92);
+        cursor: pointer;
+      }
+
+      #menu button:hover {
+        background: rgba(255, 220, 190, 0.35);
+        border-radius: 8px;
+      }
+
+      #chat {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        display: flex;
+        gap: 8px;
+        padding: 10px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(255, 210, 180, 0.45);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      }
+
+      #chat input {
+        flex: 1;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font: 12px system-ui, -apple-system, Segoe UI, sans-serif;
+        outline: none;
+        background: rgba(255, 255, 255, 0.9);
+        color: rgba(30, 30, 30, 0.92);
+      }
+
+      #chat button {
+        border: 0;
+        border-radius: 10px;
+        padding: 8px 12px;
+        font: 12px system-ui, -apple-system, Segoe UI, sans-serif;
+        background: rgba(255, 200, 170, 0.8);
+        color: rgba(60, 60, 60, 0.92);
+        cursor: pointer;
+      }
+
+      #chat button:hover {
+        background: rgba(255, 200, 170, 0.98);
+      }
+
+      #chat button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="300" height="300"></canvas>
+
+    <div id="menu" hidden>
+      <button data-act="chat">聊天</button>
+      <button data-act="walk">散步</button>
+      <button data-act="sleep">睡觉</button>
+      <button data-act="quit">退出</button>
+    </div>
+
+    <div id="chat" hidden>
+      <input id="chatInput" placeholder="跟小团子说点什么…" />
+      <button id="chatSend">发送</button>
+    </div>
+
+    <script>
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d');
+
+      const DPR = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+      canvas.width = 300 * DPR;
+      canvas.height = 300 * DPR;
+      canvas.style.width = '300px';
+      canvas.style.height = '300px';
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+      function rand(min, max) {
+        return min + Math.random() * (max - min);
+      }
+      function clamp(v, a, b) {
+        return Math.max(a, Math.min(b, v));
+      }
+      function easeOutCubic(x) {
+        const t = clamp(x, 0, 1);
+        return 1 - Math.pow(1 - t, 3);
+      }
+      function easeInOutSine(x) {
+        const t = clamp(x, 0, 1);
+        return -(Math.cos(Math.PI * t) - 1) / 2;
+      }
+
+      const state = {
+        t0: performance.now(),
+        now: performance.now(),
+        mode: 'idle',
+        modeSince: performance.now(),
+        bubble: null,
+        nextBlinkAt: 0,
+        nextBounceAt: 0,
+        inChat: false
+      };
+
+      function scheduleBlinkBounce(fromNow = 0) {
+        state.nextBlinkAt = state.now + fromNow + rand(5000, 10000);
+        state.nextBounceAt = state.now + fromNow + rand(20000, 40000);
+      }
+      scheduleBlinkBounce(800);
+
+      function setMode(mode) {
+        if (state.mode === mode) return;
+        state.mode = mode;
+        state.modeSince = state.now;
+      }
+
+      function wrapByWidth(text, maxWidthPx) {
+        const t = String(text || '');
+        const lines = [];
+        let line = '';
+        for (let i = 0; i < t.length; i++) {
+          const ch = t[i];
+          const next = line + ch;
+          if (ctx.measureText(next).width > maxWidthPx && line) {
+            lines.push(line);
+            line = ch;
+            if (lines.length >= 5) break;
+          } else {
+            line = next;
+          }
+        }
+        if (line && lines.length < 5) lines.push(line);
+        return lines;
+      }
+
+      function roundRectPath(x, y, w, h, r) {
+        const rr = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + rr, y);
+        ctx.arcTo(x + w, y, x + w, y + h, rr);
+        ctx.arcTo(x + w, y + h, x, y + h, rr);
+        ctx.arcTo(x, y + h, x, y, rr);
+        ctx.arcTo(x, y, x + w, y, rr);
+        ctx.closePath();
+      }
+
+      function drawBubble(anchorX, anchorY, text) {
+        ctx.save();
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, sans-serif';
+
+        const maxTextW = 170;
+        const lines = wrapByWidth(text, maxTextW);
+        const lineH = 16;
+        const padX = 10;
+        const padY = 8;
+        const textW = Math.max(40, ...lines.map((l) => ctx.measureText(l).width));
+        const w = Math.min(maxTextW, textW) + padX * 2;
+        const h = lines.length * lineH + padY * 2;
+
+        const x = clamp(anchorX, 6, 300 - w - 6);
+        const y = clamp(anchorY, 6, 300 - h - 6);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.84)';
+        ctx.strokeStyle = 'rgba(255,220,190,0.40)';
+        ctx.lineWidth = 2;
+        roundRectPath(x, y, w, h, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        const tailX = clamp(x + w * 0.35, x + 16, x + w - 16);
+        ctx.beginPath();
+        ctx.moveTo(tailX, y + h);
+        ctx.lineTo(tailX + 10, y + h);
+        ctx.lineTo(tailX - 6, y + h + 12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(60,60,60,0.92)';
+        for (let i = 0; i < lines.length; i++) {
+          ctx.fillText(lines[i], x + padX, y + padY + lineH * (i + 1) - 4);
+        }
+
+        ctx.restore();
+      }
+
+      function drawDumpling(cx, cy, p) {
+        const r = 62;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(p.tilt || 0);
+
+        const glow = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r * 1.25);
+        glow.addColorStop(0, 'rgba(255,255,255,0.20)');
+        glow.addColorStop(0.65, 'rgba(255,255,255,0.08)');
+        glow.addColorStop(1, 'rgba(255,210,150,0.00)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        const body = ctx.createRadialGradient(-r * 0.25, -r * 0.35, r * 0.25, 0, 0, r);
+        body.addColorStop(0, 'rgba(255,255,255,0.92)');
+        body.addColorStop(1, 'rgba(255,255,255,0.55)');
+        ctx.fillStyle = body;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255,230,200,0.25)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, r - 1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const hs = p.hairSwing || 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.80)';
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(-12, -r + 6);
+        ctx.quadraticCurveTo(-18 - hs * 8, -r - 18, -10 - hs * 2, -r - 30);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(12, -r + 6);
+        ctx.quadraticCurveTo(18 + hs * 8, -r - 18, 10 + hs * 2, -r - 30);
+        ctx.stroke();
+
+        const eyeY = -8;
+        if (p.blink) {
+          ctx.strokeStyle = 'rgba(30,30,30,0.70)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(-18, eyeY);
+          ctx.lineTo(-6, eyeY);
+          ctx.moveTo(6, eyeY);
+          ctx.lineTo(18, eyeY);
+          ctx.stroke();
+        } else if (p.sleep) {
+          ctx.strokeStyle = 'rgba(30,30,30,0.55)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(-12, eyeY, 7, 0.1 * Math.PI, 0.9 * Math.PI);
+          ctx.arc(12, eyeY, 7, 0.1 * Math.PI, 0.9 * Math.PI);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = 'rgba(30,30,30,0.85)';
+          ctx.beginPath();
+          ctx.arc(-12, eyeY, 4, 0, Math.PI * 2);
+          ctx.arc(12, eyeY, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = 'rgba(255,140,170,0.25)';
+        ctx.beginPath();
+        ctx.arc(-26, 6, 9, 0, Math.PI * 2);
+        ctx.arc(26, 6, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function computeBounceOffset(msSince) {
+        const total = 1200;
+        const p = clamp(msSince / total, 0, 1);
+        const two = p * 2;
+        const phase = two < 1 ? two : two - 1;
+        const amp = two < 1 ? 26 : 16;
+        const e = easeOutCubic(phase);
+        return (1 - Math.abs(2 * e - 1)) * (-amp);
+      }
+
+      function tick() {
+        state.now = performance.now();
+        const t = (state.now - state.t0) / 1000;
+
+        ctx.clearRect(0, 0, 300, 300);
+
+        const baseHover = Math.sin(t * Math.PI * 2 * 0.4) * 6;
+        const hairSwing = Math.sin(t * Math.PI * 2 * 1.0) * 0.35;
+
+        let yOffset = baseHover;
+        let tilt = 0;
+        let blink = false;
+        const sleep = state.mode === 'sleep';
+
+        if (state.mode === 'blink') {
+          const dt = state.now - state.modeSince;
+          blink = dt >= 0 && dt <= 200;
+          if (dt > 220) setMode('idle');
+        }
+
+        if (state.mode === 'bounce') {
+          const dt = state.now - state.modeSince;
+          yOffset += computeBounceOffset(dt);
+          if (dt >= 1220) setMode('idle');
+        }
+
+        if (state.mode === 'think') {
+          tilt = Math.sin(t * 2.2) * 0.1;
+          yOffset += Math.sin(t * 2.6) * 1.2;
+        }
+
+        if (sleep) {
+          yOffset *= 0.35;
+          tilt = 0;
+        }
+
+        if (state.mode === 'idle') {
+          if (state.now >= state.nextBlinkAt) {
+            setMode('blink');
+            scheduleBlinkBounce();
+          } else if (state.now >= state.nextBounceAt) {
+            setMode('bounce');
+            scheduleBlinkBounce();
+          }
+        }
+
+        const cx = 150;
+        const cy = 160 + yOffset;
+        drawDumpling(cx, cy, { hairSwing, tilt, blink, sleep });
+
+        if (state.mode === 'think') {
+          drawBubble(cx + 50, cy - 150, '…');
+        }
+        if (sleep) {
+          drawBubble(cx + 60, cy - 150, 'Zzz');
+        }
+        if (state.bubble && state.now < state.bubble.until) {
+          drawBubble(cx + 40, cy - 170, state.bubble.text);
+        }
+
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      const menu = document.getElementById('menu');
+      const chat = document.getElementById('chat');
+      const chatInput = document.getElementById('chatInput');
+      const chatSend = document.getElementById('chatSend');
+
+      function hideMenu() {
+        menu.hidden = true;
+      }
+
+      function showMenu(x, y) {
+        menu.hidden = false;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        requestAnimationFrame(() => {
+          const r = menu.getBoundingClientRect();
+          const px = clamp(x, 6, window.innerWidth - r.width - 6);
+          const py = clamp(y, 6, window.innerHeight - r.height - 6);
+          menu.style.left = `${px}px`;
+          menu.style.top = `${py}px`;
+        });
+      }
+
+      function openChat() {
+        chat.hidden = false;
+        state.inChat = true;
+        chatSend.disabled = false;
+        chatInput.value = '';
+        chatInput.focus();
+        setMode('think');
+      }
+
+      function closeChat() {
+        chat.hidden = true;
+        state.inChat = false;
+        if (state.mode === 'think') setMode('idle');
+      }
+
+      async function sendChat() {
+        const text = String(chatInput.value || '').trim();
+        if (!text) return;
+        chatSend.disabled = true;
+        setMode('think');
+        try {
+          const reply = await window.dumpling.chatComplete(text);
+          state.bubble = { text: reply, until: performance.now() + 10000 };
+        } catch (err) {
+          const msg = String(err && err.message ? err.message : err);
+          state.bubble = { text: `（请求失败）${msg}`, until: performance.now() + 10000 };
+        } finally {
+          chatSend.disabled = false;
+          closeChat();
+          if (state.mode === 'think') setMode('idle');
+        }
+      }
+
+      chatSend.addEventListener('click', sendChat);
+      chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendChat();
+        if (e.key === 'Escape') closeChat();
+      });
+
+      function isUIEventTarget(el) {
+        return el && (el.closest('#menu') || el.closest('#chat'));
+      }
+
+      window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!chat.hidden) return;
+        showMenu(e.clientX, e.clientY);
+      });
+
+      window.addEventListener('pointerdown', (e) => {
+        if (!menu.hidden && !menu.contains(e.target)) hideMenu();
+      });
+
+      menu.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        hideMenu();
+        const act = btn.dataset.act;
+        if (act === 'quit') window.dumpling.quit();
+        if (act === 'walk') setMode('bounce');
+        if (act === 'sleep') setMode(state.mode === 'sleep' ? 'idle' : 'sleep');
+        if (act === 'chat') openChat();
+      });
+
+      let dragging = false;
+      let last = null;
+
+      window.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        if (isUIEventTarget(e.target)) return;
+        dragging = true;
+        last = { x: e.screenX, y: e.screenY };
+      });
+
+      window.addEventListener('pointermove', (e) => {
+        if (!dragging || !last) return;
+        const dx = e.screenX - last.x;
+        const dy = e.screenY - last.y;
+        last = { x: e.screenX, y: e.screenY };
+        window.dumpling.moveBy(dx, dy);
+      });
+
+      window.addEventListener('pointerup', () => {
+        dragging = false;
+        last = null;
+      });
+    </script>
+  </body>
+</html>
+
